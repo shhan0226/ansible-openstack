@@ -1,0 +1,85 @@
+---
+- name: "Controller : Nova Check ~~~~~~~~~~~~~~!!!"
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+
+  tasks:
+    - name: Synchronize data on disk with memory
+      ansible.builtin.shell:
+        cmd: sync
+
+    - name: List nova-compute services
+      shell: |
+        . /root/admin-openrc
+        openstack compute service list --service nova-compute
+      args:
+        executable: /bin/bash
+      register: nova_compute_services
+      when: hostname == 'controller'
+      
+    - debug:
+        msg:  "{{ nova_compute_services.stdout_lines }}"
+      when: hostname == 'controller'  
+
+
+    - name: Discover nova-compute hosts
+      ansible.builtin.shell:
+        cmd: su -s /bin/sh -c "nova-manage cell_v2 discover_hosts --verbose" nova
+      register: nova_compute_hosts
+      when: hostname == 'controller'  
+
+    - debug:
+        msg:  "{{ nova_compute_hosts.stdout_lines }}"
+      when: hostname == 'controller'  
+
+
+    - name: Set discover_hosts_in_cells_interval in nova.conf
+      ansible.builtin.ini_file:
+        path: /etc/nova/nova.conf
+        section: scheduler
+        option: discover_hosts_in_cells_interval
+        value: "300"
+      when: hostname == 'controller'  
+
+
+
+
+    - name: List compute services
+      shell: |
+        . /root/admin-openrc
+        openstack compute service list
+      args:
+        executable: /bin/bash
+      register: compute_services
+      when: hostname == 'controller'
+    - debug:
+        msg:  "{{ compute_services.stdout_lines }}"
+      when: hostname == 'controller'  
+
+
+    - name: List service catalog
+      shell: |
+        . /root/admin-openrc
+        openstack catalog list
+      args:
+        executable: /bin/bash
+      register: service_catalog
+      when: hostname == 'controller'
+    - debug:
+        msg:  "{{ service_catalog.stdout_lines }}"
+      when: hostname == 'controller'  
+
+
+    - name: List available images
+      shell: |
+        . /root/admin-openrc
+        openstack image list
+      args:
+        executable: /bin/bash
+      register: image_list
+      when: hostname == 'controller'
+    - debug:
+        msg:  "{{ image_list.stdout_lines }}"
+      when: hostname == 'controller'  

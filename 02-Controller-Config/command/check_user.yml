@@ -1,0 +1,34 @@
+---
+- name: "USER 확인!!"
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+  
+  tasks:
+  - name: Print user and controller IP address
+    debug:
+      msg: |
+        현재 사용자는: [{{ ansible_user }}],
+        IP: [{{ inventory_hostname }}],
+        Hostname: [{{ hostname }}],
+    when: hostname == 'controller'
+
+  - name: Print user and compute1 IP address
+    debug:
+      msg: |
+        현재 사용자는: [{{ ansible_user }}],
+        IP: [{{ inventory_hostname }}],
+        Hostname: [{{ hostname }}],
+    when: hostname in ['compute1', 'compute2']
+
+  - name: Print IP and hostname for each host in 'remotes'
+    debug:
+      msg: "IP: {{ item }} - Hostname: {{ hostvars[item].hostname }}"
+    loop: "{{ groups['remotes'] }}"
+  
+  - name: Gather facts
+    ansible.builtin.setup:
+      
+  - name: Display the CPU architecture
+    debug:
+      msg: "The CPU architecture is {{ ansible_architecture }}"

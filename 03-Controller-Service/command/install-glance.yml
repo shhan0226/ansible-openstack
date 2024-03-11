@@ -1,0 +1,196 @@
+---
+- name: "Controller : Glance 설치 ~~~~~~~~~~~~~~!!!"
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+  vars:
+    db_name: glance    
+    region_name: RegionOne
+    glance_config: "/etc/glance/glance-api.conf"    
+    endpoint_id_command: "openstack endpoint list -c ID --interface admin -f value"
+
+  tasks:
+
+    # DB
+    - name: Create database using direct SQL command
+      shell: mysql -e "CREATE DATABASE glance;"
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+    - name: Grant privileges to '{{ db_name }}' user on localhost
+      shell: mysql -e "GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'localhost' IDENTIFIED BY '{{ STACK_PASSWD }}';"
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+    - name: Grant privileges to '{{ db_name }}' user from any host
+      shell: mysql -e "GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'%' IDENTIFIED BY '{{ STACK_PASSWD }}';"
+      # ignore_errors: yes
+      when: hostname == 'controller'
+    
+    - name: Flush privileges
+      shell: mysql -e "FLUSH PRIVILEGES;"
+      # ignore_errors: yes
+      when: hostname == 'controller'  
+
+
+    
+    # Glance CREATE SERVICE
+    - name: Create glance user in OpenStack
+      shell: |
+        . /root/admin-openrc
+        openstack user create --domain default --password "{{ STACK_PASSWD }}" glance
+      args:
+        executable: /bin/bash
+      register: glance_user_creation
+      when: hostname == 'controller'      
+
+    - debug:
+        msg:  "{{ glance_user_creation.stdout_lines }}"
+      when: hostname == 'controller'  
+
+    - name: Add admin role to glance user
+      shell: |
+        . /root/admin-openrc
+        openstack role add --project service --user glance admin
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+    - name: Create glance service in OpenStack
+      shell: |
+        . /root/admin-openrc
+        openstack service create --name glance --description "OpenStack Image" image
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+
+
+    # Glance - Create the Image service API endpoints
+    - name: Create glance service public API endpoint
+      shell: |
+        . /root/admin-openrc
+        openstack endpoint create --region "{{ region_name }}" image public http://{{ hostname }}:9292
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+    - name: Create glance service internal API endpoint
+      shell: |
+        . /root/admin-openrc
+        openstack endpoint create --region "{{ region_name }}" image internal http://{{ hostname }}:9292
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+    - name: Create glance service admin API endpoint
+      shell: |
+        . /root/admin-openrc
+        openstack endpoint create --region "{{ region_name }}" image admin http://{{ hostname }}:9292
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+
+
+
+    # Glance Install  
+    - name: Install Glance
+      apt:
+        name: glance
+        state: present
+        update_cache: yes
+      when: hostname == 'controller'
+
+    - name: Configure glance-api.conf database connection
+      ini_file:
+        path: "{{ glance_config }}"
+        section: database
+        option: connection
+        value: "mysql+pymysql://glance:{{ STACK_PASSWD }}@{{ hostname }}/glance"
+        mode: 0644
+      when: hostname == 'controller'
+
+
+
+    # user
+    - name: Get OpenStack admin interface endpoint ID
+      shell: |
+        . /root/admin-openrc
+        openstack endpoint list -c ID --service glance --interface admin -f value
+      args:
+        executable: /bin/bash
+      # ignore_errors: yes  
+      register: endpoint_id
+      when: hostname == 'controller'
+
+    - name: Print the endpoint ID
+      ansible.builtin.debug:
+        msg: "The endpoint ID is {{ endpoint_id.stdout }}"
+      when: hostname == 'controller'
+
+
+
+
+
+
+    - name: Set keystone_authtoken and other configurations in glance-api.conf
+      ini_file:
+        path: "{{ glance_config }}"
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: 0644
+      loop:
+        - { section: 'keystone_authtoken', option: 'www_authenticate_uri', value: "http://{{ hostname }}:5000" }
+        - { section: 'keystone_authtoken', option: 'auth_url', value: "http://{{ hostname }}:5000" }
+        - { section: 'keystone_authtoken', option: 'memcached_servers', value: "{{ hostname }}:11211" }
+        - { section: 'keystone_authtoken', option: 'auth_type', value: "password" }
+        - { section: 'keystone_authtoken', option: 'project_domain_name', value: "Default" }
+        - { section: 'keystone_authtoken', option: 'user_domain_name', value: "Default" }
+        - { section: 'keystone_authtoken', option: 'project_name', value: "service" }
+        - { section: 'keystone_authtoken', option: 'username', value: "glance" }
+        - { section: 'keystone_authtoken', option: 'password', value: "{{ STACK_PASSWD }}" }
+        - { section: 'paste_deploy', option: 'flavor', value: "keystone" }
+        - { section: 'glance_store', option: 'stores', value: "file,http" }
+        - { section: 'glance_store', option: 'default_store', value: "file" }
+        - { section: 'glance_store', option: 'filesystem_store_datadir', value: "/var/lib/glance/images/" }
+        - { section: 'oslo_limit', option: 'auth_url', value: "http://{{ hostname }}:5000" }
+        - { section: 'oslo_limit', option: 'auth_type', value: "password" }
+        - { section: 'oslo_limit', option: 'user_domain_id', value: "default" }
+        - { section: 'oslo_limit', option: 'username', value: "admin" }
+        - { section: 'oslo_limit', option: 'system_scope', value: "all" }
+        - { section: 'oslo_limit', option: 'password', value: "{{ STACK_PASSWD }}" }
+        - { section: 'oslo_limit', option: 'region_name', value: "{{ region_name }}" }
+        - { section: 'oslo_limit', option: 'endpoint_id', value: "{{ endpoint_id.stdout }}" }
+      when: hostname == 'controller'
+
+
+
+    # Add reader role
+    - name: Add reader role to admin user in Default domain
+      shell: |
+        . /root/admin-openrc
+        openstack role add --user admin --user-domain Default --system all reader
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+
+
+    # Glance Reg. DB
+    - name: Run glance-manage db_sync
+      ansible.builtin.command:
+        cmd: su -s /bin/sh -c "glance-manage db_sync" glance
+      when: hostname == 'controller'
+
+
+
+    # Glance Verify operation
+    - name: Restart glance-api service
+      ansible.builtin.service:
+        name: glance-api
+        state: restarted
+      when: hostname == 'controller'
+

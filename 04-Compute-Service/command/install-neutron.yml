@@ -1,0 +1,102 @@
+---
+- name: "Controller : neutron 설치 ~~~~~~~~~~~~~~!!!"
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+  vars: 
+    region_name: RegionOne
+    path_config: "/etc/neutron/neutron.conf"    
+
+  tasks:
+
+    # Service Install  
+    - name: Install neutron-linuxbridge-agent
+      ansible.builtin.apt:
+        name:
+          - neutron-linuxbridge-agent
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+      when: hostname != 'controller'
+
+
+    - name: Set neutron and other configurations in {{ path_config }}
+      ini_file:
+        path: "{{ path_config }}"
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: 0644
+      loop:
+        - { section: 'DEFAULT', option: 'transport_url', value: "rabbit://openstack:{{STACK_PASSWD}}@controller" }
+        - { section: 'DEFAULT', option: 'auth_strategy', value: "keystone" }
+        - { section: 'keystone_authtoken', option: 'www_authenticate_uri', value: "http://controller:5000" }
+        - { section: 'keystone_authtoken', option: 'auth_url', value: "http://controller:5000" }
+        - { section: 'keystone_authtoken', option: 'memcached_servers', value: "controller:11211" }
+        - { section: 'keystone_authtoken', option: 'auth_type', value: "password" }
+        - { section: 'keystone_authtoken', option: 'project_domain_name', value: "default" }
+        - { section: 'keystone_authtoken', option: 'user_domain_name', value: "default" }
+        - { section: 'keystone_authtoken', option: 'project_name', value: "service" }
+        - { section: 'keystone_authtoken', option: 'username', value: "neutron" }
+        - { section: 'keystone_authtoken', option: 'password', value: "{{STACK_PASSWD}}" }
+        - { section: 'oslo_concurrency', option: 'lock_path', value: "/var/lib/neutron/tmp" }
+      when: hostname != 'controller'
+
+
+    - name: Set linuxbridge_agent and other configurations in /etc/neutron/plugins/ml2/linuxbridge_agent.ini
+      ini_file:
+        path: "/etc/neutron/plugins/ml2/linuxbridge_agent.ini"
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: 0644
+      loop:
+        - { section: 'linux_bridge', option: 'physical_interface_mappings', value: "provider:{{ INTERFACE_NAME }}" }
+        - { section: 'vxlan', option: 'enable_vxlan', value: "true" }
+        - { section: 'vxlan', option: 'local_ip', value: "{{ inventory_hostname }}" }
+        - { section: 'vxlan', option: 'l2_population', value: "true" }
+        - { section: 'securitygroup', option: 'enable_security_group', value: "true" }
+        - { section: 'securitygroup', option: 'firewall_driver', value: "neutron.agent.linux.iptables_firewall.IptablesFirewallDriver" }
+      when: hostname != 'controller'
+
+
+    - name: Configure sysctl for net.bridge.bridge-nf-call-iptables and net.bridge.bridge-nf-call-ip6tables
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      loop:
+        - { name: "net.bridge.bridge-nf-call-iptables", value: "1" }
+        - { name: "net.bridge.bridge-nf-call-ip6tables", value: "1" }
+      when: hostname != 'controller'
+
+
+    - name: Set linuxbridge_agent and other configurations in /etc/nova/nova.conf 
+      ini_file:
+        path: "/etc/nova/nova.conf"
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: 0644
+      loop:
+        - { section: 'neutron', option: 'auth_url', value: "http://controller:5000" }
+        - { section: 'neutron', option: 'auth_type', value: "password" }
+        - { section: 'neutron', option: 'project_domain_name', value: "default" }
+        - { section: 'neutron', option: 'user_domain_name', value: "default" }
+        - { section: 'neutron', option: 'region_name', value: "{{ region_name }}" }
+        - { section: 'neutron', option: 'project_name', value: "service" }
+        - { section: 'neutron', option: 'username', value: "neutron" }
+        - { section: 'neutron', option: 'password', value: "{{STACK_PASSWD}}" }
+      when: hostname != 'controller'
+  
+    - name: Restart nova-compute and neutron-linuxbridge-agent services
+      systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop:
+        - nova-compute
+        - neutron-linuxbridge-agent
+      when: hostname != 'controller'
+

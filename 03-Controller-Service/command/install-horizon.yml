@@ -1,0 +1,63 @@
+---
+- name: "Controller : Horizon 설치 ~~~~~~~~~~~~~~!!!"
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+
+  tasks:
+
+    - name: Install openstack-dashboard
+      apt:
+        name: openstack-dashboard
+        state: present
+        update_cache: yes
+      when: hostname == 'controller'
+
+    - name: Backup local_settings.py
+      copy:
+        src: /etc/openstack-dashboard/local_settings.py
+        dest: /etc/openstack-dashboard/local_settings.py.backup
+        remote_src: yes
+      when: hostname == 'controller'       
+
+    - name: Update OPENSTACK_HOST in local_settings.py
+      lineinfile:
+        path: /etc/openstack-dashboard/local_settings.py
+        regexp: '^OPENSTACK_HOST = "127.0.0.1"'
+        line: 'OPENSTACK_HOST = "{{ hostname }}"'
+      when: hostname == 'controller'
+
+    - name: Update memcached LOCATION in local_settings.py
+      lineinfile:
+        path: /etc/openstack-dashboard/local_settings.py
+        regexp: "'LOCATION': '127.0.0.1:11211',"
+        line: "'LOCATION': '{{ hostname }}:11211',"
+      when: hostname == 'controller'
+
+    - name: Update the identity service URL in local_settings.py
+      lineinfile:
+        path: /etc/openstack-dashboard/local_settings.py
+        regexp: '^OPENSTACK_KEYSTONE_URL = "http://%s/identity/v3" % OPENSTACK_HOST'
+        line: 'OPENSTACK_KEYSTONE_URL = "http://%s:5000/v3" % OPENSTACK_HOST'
+      when: hostname == 'controller'
+
+    - name: Change TIME_ZONE to Asia/Seoul in local_settings.py
+      lineinfile:
+        path: /etc/openstack-dashboard/local_settings.py
+        regexp: 'TIME_ZONE = "UTC"'
+        line: 'TIME_ZONE = "Asia/Seoul"'
+      when: hostname == 'controller'
+
+    - name: Add SESSION_ENGINE setting in local_settings.py
+      lineinfile:
+        path: /etc/openstack-dashboard/local_settings.py
+        line: "SESSION_ENGINE = 'django.contrib.sessions.backends.cache'"
+        create: yes
+      when: hostname == 'controller'
+
+    - name: Reload apache2 service
+      systemd:
+        name: apache2
+        state: reloaded
+      when: hostname == 'controller'        

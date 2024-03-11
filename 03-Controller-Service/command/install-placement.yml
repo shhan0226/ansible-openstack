@@ -1,0 +1,202 @@
+---
+- name: "Controller : Placement 설치 ~~~~~~~~~~~~~~!!!"
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+  vars:
+    db_name: placement        
+    region_name: RegionOne
+    path_config: "/etc/placement/placement.conf"    
+
+  tasks:
+    # DB
+    - name: Create database using direct SQL command
+      shell: mysql -e "CREATE DATABASE placement;"
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+    - name: Grant privileges to '{{ db_name }}' user on localhost
+      shell: mysql -e "GRANT ALL PRIVILEGES ON placement.* TO 'placement'@'localhost' IDENTIFIED BY '{{ STACK_PASSWD }}';"
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+    - name: Grant privileges to '{{ db_name }}' user from any host
+      shell: mysql -e "GRANT ALL PRIVILEGES ON placement.* TO 'placement'@'%' IDENTIFIED BY '{{ STACK_PASSWD }}';"
+      # ignore_errors: yes
+      when: hostname == 'controller'
+    
+    - name: Flush privileges
+      shell: mysql -e "FLUSH PRIVILEGES;"
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+
+    
+    # Glance CREATE SERVICE
+    - name: Create {{ db_name }} user in OpenStack
+      shell: |
+        . /root/admin-openrc
+        openstack user create --domain default --password {{ STACK_PASSWD }} placement
+      args:
+        executable: /bin/bash
+      register: user_creation
+      when: hostname == 'controller'
+
+    - debug:
+        msg:  "{{ user_creation.stdout_lines }}"
+      when: hostname == 'controller'  
+
+    - name: Add admin role to {{ db_name }} user
+      shell: |
+        . /root/admin-openrc
+        openstack role add --project service --user placement admin
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+    - name: Create {{ db_name }} service in OpenStack
+      shell: |
+        . /root/admin-openrc
+        openstack service create --name placement --description "Placement API" placement
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+
+
+    # Glance - Create the Image service API endpoints
+    - name: Create {{ db_name }} service public API endpoint
+      shell: |
+        . /root/admin-openrc
+        openstack endpoint create --region {{ region_name }} placement public http://{{ hostname }}:8778
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+    - name: Create {{ db_name }} service internal API endpoint
+      shell: |
+        . /root/admin-openrc
+        openstack endpoint create --region {{ region_name }} placement internal http://{{ hostname }}:8778
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+    - name: Create {{ db_name }} service admin API endpoint
+      shell: |
+        . /root/admin-openrc
+        openstack endpoint create --region {{ region_name }} placement admin http://{{ hostname }}:8778
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+
+
+    # Service Install  
+    - name: Install {{ db_name }}
+      ansible.builtin.apt:
+        name: placement-api
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+      when: hostname == 'controller'
+
+    - name: Configure placement.conf database connection
+      ini_file:
+        path: "{{ path_config }}"
+        section: placement_database
+        option: connection
+        value: "mysql+pymysql://placement:{{ STACK_PASSWD }}@{{ hostname }}/placement"
+        mode: 0644
+      when: hostname == 'controller'
+
+
+    - name: Set keystone_authtoken and other configurations in {{ path_config }}
+      ini_file:
+        path: "{{ path_config }}"
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: 0644
+      loop:
+        - { section: 'api', option: 'auth_strategy', value: "keystone" }
+        - { section: 'keystone_authtoken', option: 'auth_url', value: "http://{{ hostname }}:5000/v3" }
+        - { section: 'keystone_authtoken', option: 'memcached_servers', value: "{{ hostname }}:11211" }
+        - { section: 'keystone_authtoken', option: 'auth_type', value: "password" }
+        - { section: 'keystone_authtoken', option: 'project_domain_name', value: "Default" }
+        - { section: 'keystone_authtoken', option: 'user_domain_name', value: "Default" }
+        - { section: 'keystone_authtoken', option: 'project_name', value: "service" }
+        - { section: 'keystone_authtoken', option: 'username', value: "placement" }
+        - { section: 'keystone_authtoken', option: 'password', value: "{{ STACK_PASSWD }}" }        
+      when: hostname == 'controller'
+
+
+    # Glance Reg. DB
+    - name: Run {{ db_name }} db_sync
+      ansible.builtin.command:
+        cmd: su -s /bin/sh -c "placement-manage db sync" placement
+      when: hostname == 'controller'
+
+
+
+    - name: Restart Apache2 service
+      ansible.builtin.service:
+        name: apache2
+        state: restarted
+      when: hostname == 'controller'
+
+
+
+    - name: Check placement status
+      shell: |
+        . /root/admin-openrc
+        placement-status upgrade check
+      args:
+        executable: /bin/bash
+      register: placement_status  
+      when: hostname == 'controller'
+
+    - name: Show placement_status result
+      debug:
+        var: placement_status.stdout_lines      
+      when: hostname == 'controller'
+
+
+
+
+
+
+
+    - name: Install osc-placement
+      ansible.builtin.pip:
+        name: osc-placement
+        state: present
+      when: hostname == 'controller'
+
+    - name: List resource classes
+      shell: |
+        . /root/admin-openrc
+        openstack --os-placement-api-version 1.2 resource class list --sort-column name
+      args:
+        executable: /bin/bash
+      register: List_resource_result  
+      when: hostname == 'controller'
+
+    - name: Show List resource result
+      debug:
+        var: List_resource_result.stdout_lines      
+      when: hostname == 'controller'
+
+    - name: List traits
+      shell: |
+        . /root/admin-openrc  
+        openstack --os-placement-api-version 1.6 trait list --sort-column name
+      args:
+        executable: /bin/bash
+      register: List_traits_result  
+      when: hostname == 'controller'
+
+    - name: Show List traits result
+      debug:
+        var: List_traits_result.stdout_lines      
+      when: hostname == 'controller'

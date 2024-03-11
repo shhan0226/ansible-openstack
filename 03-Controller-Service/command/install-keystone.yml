@@ -1,0 +1,250 @@
+---
+- name: "Controller : KeyStone 설치 ~~~~~~~~~~~~~~!!!"
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+  vars:
+    db_name: keystone
+    db_user: keystone    
+
+  tasks:
+    - name: Create database using direct SQL command
+      shell: mysql -e "CREATE DATABASE keystone;"
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+    - name: Grant privileges to '{{ db_name }}' user on localhost
+      shell: mysql -e "GRANT ALL PRIVILEGES ON keystone.* TO 'keystone'@'localhost' IDENTIFIED BY '{{ STACK_PASSWD }}';"
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+    - name: Grant privileges to '{{ db_name }}' user from any host
+      shell: mysql -e "GRANT ALL PRIVILEGES ON keystone.* TO 'keystone'@'%' IDENTIFIED BY '{{ STACK_PASSWD }}';"
+      # ignore_errors: yes
+      when: hostname == 'controller'
+    
+    - name: Flush privileges
+      shell: mysql -e "FLUSH PRIVILEGES;"
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+    # Apache2
+    - name: Install Apache2
+      apt:
+        name: apache2
+        state: present
+        update_cache: yes
+      when: hostname == 'controller'
+
+    - name: Install Keystone
+      apt:
+        name: keystone
+        state: present
+        update_cache: yes
+      when: hostname == 'controller'
+
+    # database
+    - name: Set database connection in keystone.conf
+      ini_file:
+        path: /etc/keystone/keystone.conf
+        section: database
+        option: connection
+        value: "mysql+pymysql://keystone:{{ STACK_PASSWD }}@{{ hostname }}/keystone"
+        mode: '0644'
+      when: hostname == 'controller'  
+
+    - name: Set token provider in keystone.conf
+      ini_file:
+        path: /etc/keystone/keystone.conf
+        section: token
+        option: provider
+        value: fernet
+        mode: '0644'
+      when: hostname == 'controller'
+
+    - name: Create database using direct SQL command      
+      shell: su -s /bin/sh -c "keystone-manage db_sync" keystone
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+    - name: Initialize Keystone Fernet Keys
+      shell: keystone-manage fernet_setup --keystone-user keystone --keystone-group keystone
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+    - name: Initialize Keystone credential_setup
+      shell: keystone-manage credential_setup --keystone-user keystone --keystone-group keystone
+      # ignore_errors: yes
+      when: hostname == 'controller'
+      
+    - name: Bootstrap the Keystone service
+      shell: >
+        keystone-manage bootstrap --bootstrap-password {{ STACK_PASSWD }}
+        --bootstrap-admin-url http://{{ hostname }}:5000/v3/
+        --bootstrap-internal-url http://{{ hostname }}:5000/v3/
+        --bootstrap-public-url http://{{ hostname }}:5000/v3/
+        --bootstrap-region-id RegionOne
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+    - name: Add ServerName to apache2.conf
+      lineinfile:
+        path: /etc/apache2/apache2.conf
+        line: "ServerName {{ hostname }}"
+        create: no
+      when: hostname == 'controller'
+
+    - name: Restart Apache2 service
+      service:
+        name: apache2
+        state: restarted      
+      when: hostname == 'controller'
+ 
+    # admin-openrc
+    - name: Create admin-openrc file
+      copy:
+        dest: "/root/admin-openrc"
+        content: |
+          export OS_PROJECT_DOMAIN_NAME=Default
+          export OS_USER_DOMAIN_NAME=Default
+          export OS_PROJECT_NAME=admin
+          export OS_USERNAME=admin
+          export OS_PASSWORD={{ STACK_PASSWD }}
+          export OS_AUTH_URL=http://{{ hostname }}:5000/v3
+          export OS_IDENTITY_API_VERSION=3
+          export OS_IMAGE_API_VERSION=2
+        mode: '0644'
+      become: yes
+      when: hostname == 'controller'
+
+    # environment
+    - name: Execute OpenStack command with environment variables
+      shell: |
+        . /root/admin-openrc
+        openstack project list
+      args:
+        executable: /bin/bash
+      register: openstack_project_list      
+      when: hostname == 'controller'
+
+    - name: Show OpenStack project list
+      debug:
+        var: openstack_project_list.stdout_lines
+      when: hostname == 'controller'
+
+
+    # domain
+    - name: Create a domain in OpenStack
+      shell: |
+        . /root/admin-openrc
+        openstack domain create --description "An Example Domain" example
+      args:
+        executable: /bin/bash
+      register: domain_creation_result  
+      # ignore_errors: yes    
+      when: hostname == 'controller'
+
+    - name: Show domain creation result
+      debug:
+        var: domain_creation_result.stdout_lines      
+      when: hostname == 'controller'
+
+
+    # project
+    - name: Create Service Project
+      shell: |
+        . /root/admin-openrc
+        openstack project create --domain default --description "Service Project" service
+      args:
+        executable: /bin/bash
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+    - name: Create Demo Project
+      shell: |
+        . /root/admin-openrc
+        openstack project create --domain default --description "Demo Project" myproject
+      args:
+        executable: /bin/bash
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+
+    # user
+    - name: Create OpenStack user
+      shell: |
+        . /root/admin-openrc
+        openstack user create --domain default --password {{ STACK_PASSWD }} myuser
+      args:
+        executable: /bin/bash
+      # ignore_errors: yes  
+      when: hostname == 'controller'
+
+
+    # role
+    - name: Create role
+      shell: |
+        . /root/admin-openrc
+        openstack role create myrole
+      args:
+        executable: /bin/bash
+      # ignore_errors: yes  
+      when: hostname == 'controller'
+
+    - name: Add role to user in project
+      shell: |
+        . /root/admin-openrc
+        openstack role add --project myproject --user myuser myrole
+      args:
+        executable: /bin/bash
+      # ignore_errors: yes  
+      when: hostname == 'controller'
+
+      # unset
+    - name: Add role to user in project
+      shell: |
+        . /root/admin-openrc
+        unset OS_AUTH_URL OS_PASSWORD
+      args:
+        executable: /bin/bash
+      # ignore_errors: yes  
+      when: hostname == 'controller'
+
+
+      # token
+    - name: admin 계정을 위한 토큰 발급
+      command: openstack --os-auth-url http://{{ hostname }}:5000/v3 --os-project-domain-name Default --os-user-domain-name Default --os-project-name admin --os-username admin --os-password={{ STACK_PASSWD }} token issue
+      register: admin_token
+      changed_when: False
+      # ignore_errors: yes      
+      when: hostname == 'controller'
+
+    - debug: var=admin_token.stdout_lines
+      when: hostname == 'controller'
+
+    - name: myproject 계정을 위한 토큰 발급
+      command: openstack --os-auth-url http://{{ hostname }}:5000/v3 --os-project-domain-name Default --os-user-domain-name Default --os-project-name myproject --os-username myuser --os-password={{ STACK_PASSWD }} token issue
+      register: myproject_token
+      # ignore_errors: yes
+      changed_when: False
+      when: hostname == 'controller'
+
+    - debug: var=myproject_token.stdout_lines      
+      when: hostname == 'controller'
+
+
+    # token issue
+    - name: token issue
+      shell: |
+        . /root/admin-openrc
+        openstack token issue
+      args:
+        executable: /bin/bash
+      # ignore_errors: yes  
+      register: token_output
+      when: hostname == 'controller'
+
+    - debug:
+        msg: "{{ token_output.stdout_lines }}"
+      when: hostname == 'controller'

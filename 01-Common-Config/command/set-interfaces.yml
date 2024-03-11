@@ -1,0 +1,23 @@
+---
+- name: interface 설정 변경 ~~~~~~~~~~~~~~!!!
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+  tasks:
+    - name: interfaces 파일생성
+      copy:
+        content: |
+          auto {{ INTERFACE_NAME }}
+          iface {{ INTERFACE_NAME }} inet manual
+          up ip link set dev $IFACE up
+          down ip link set dev $IFACE down
+        dest: /etc/network/interfaces
+
+    - name: CAT /etc/network/interfaces
+      command: cat /etc/network/interfaces
+      register: interface_output
+
+    - name: Display result (cat /etc/network/interfacesAT)
+      debug:
+        var: interface_output.stdout_lines

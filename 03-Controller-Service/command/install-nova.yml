@@ -1,0 +1,240 @@
+---
+- name: "Controller : Nova 설치 ~~~~~~~~~~~~~~!!!"
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+  vars:
+    db_name: nova     
+    region_name: RegionOne
+    path_config: "/etc/nova/nova.conf"    
+
+  tasks:
+    # DB
+    - name: Create database using direct SQL command
+      shell: |
+        mysql -e "CREATE DATABASE nova_api;"
+        mysql -e "CREATE DATABASE nova;"
+        mysql -e "CREATE DATABASE nova_cell0;"
+      # ignore_errors: yes
+      when: hostname == 'controller'
+
+    - name: Grant privileges to '{{ db_name }}' user on localhost
+      shell: |
+        mysql -e "GRANT ALL PRIVILEGES ON nova_api.* TO 'nova'@'localhost' IDENTIFIED BY '{{ STACK_PASSWD }}';"
+        mysql -e "GRANT ALL PRIVILEGES ON nova_api.* TO 'nova'@'%' IDENTIFIED BY '{{ STACK_PASSWD }}';"
+        mysql -e "GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'localhost' IDENTIFIED BY '{{ STACK_PASSWD }}';"
+        mysql -e "GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'%' IDENTIFIED BY '{{ STACK_PASSWD }}';"
+        mysql -e "GRANT ALL PRIVILEGES ON nova_cell0.* TO 'nova'@'localhost' IDENTIFIED BY '{{ STACK_PASSWD }}';"
+        mysql -e "GRANT ALL PRIVILEGES ON nova_cell0.* TO 'nova'@'%' IDENTIFIED BY '{{ STACK_PASSWD }}';"
+      # ignore_errors: yes
+      when: hostname == 'controller'   
+
+    - name: Flush privileges
+      shell: mysql -e "FLUSH PRIVILEGES;"
+      # ignore_errors: yes
+      when: hostname == 'controller'  
+
+
+    
+    # Glance CREATE SERVICE
+    - name: Create {{ db_name }} user in OpenStack
+      shell: |
+        . /root/admin-openrc
+        openstack user create --domain default --password {{ STACK_PASSWD }} nova
+      args:
+        executable: /bin/bash      
+      register: user_creation
+      when: hostname == 'controller'
+
+    - debug:
+        msg:  "{{ user_creation.stdout_lines }}"
+      when: hostname == 'controller'  
+
+
+
+    - name: Add admin role to {{ db_name }} user
+      shell: |
+        . /root/admin-openrc
+        openstack role add --project service --user nova admin
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+
+
+    - name: Create {{ db_name }} service in OpenStack
+      shell: |
+        . /root/admin-openrc
+        openstack service create --name nova --description "OpenStack Compute" compute
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+
+
+    # Glance - Create the Image service API endpoints
+    - name: Create {{ db_name }} service public API endpoint
+      shell: |
+        . /root/admin-openrc
+        openstack endpoint create --region {{ region_name }} compute public http://{{ hostname }}:8774/v2.1
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+    - name: Create {{ db_name }} service internal API endpoint
+      shell: |
+        . /root/admin-openrc
+        openstack endpoint create --region {{ region_name }} compute internal http://{{ hostname }}:8774/v2.1
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+    - name: Create {{ db_name }} service admin API endpoint
+      shell: |
+        . /root/admin-openrc
+        openstack endpoint create --region {{ region_name }} compute admin http://{{ hostname }}:8774/v2.1
+      args:
+        executable: /bin/bash
+      when: hostname == 'controller'
+
+
+
+    # Service Install  
+    - name: Install Nova API, conductor, novncproxy, and scheduler
+      ansible.builtin.apt:
+        name:
+          - nova-api
+          - nova-conductor
+          - nova-novncproxy
+          - nova-scheduler
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+      when: hostname == 'controller'
+
+
+    - name: Configure placement.conf api_database connection
+      ini_file:
+        path: "{{ path_config }}"
+        section: api_database
+        option: connection
+        value: "mysql+pymysql://nova:{{ STACK_PASSWD }}@{{ hostname }}/nova_api"
+        mode: 0644
+      when: hostname == 'controller'
+
+    - name: Configure placement.conf database connection
+      ini_file:
+        path: "{{ path_config }}"
+        section: database
+        option: connection
+        value: "mysql+pymysql://nova:{{ STACK_PASSWD }}@{{ hostname }}/nova"
+        mode: 0644
+      when: hostname == 'controller'
+
+    - name: Configure placement.conf DEFAULT transport_url
+      ini_file:
+        path: "{{ path_config }}"
+        section: DEFAULT
+        option: transport_url
+        value: "rabbit://openstack:{{STACK_PASSWD}}@{{hostname}}:5672/"
+        mode: 0644
+      when: hostname == 'controller'
+
+    - name: Configure placement.conf DEFAULT my_ip
+      ini_file:
+        path: "{{ path_config }}"
+        section: DEFAULT
+        option: my_ip
+        value: "{{inventory_hostname}}"
+        mode: 0644
+      when: hostname == 'controller'
+
+
+
+    - name: Set keystone_authtoken and other configurations in {{ path_config }}
+      ini_file:
+        path: "{{ path_config }}"
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: 0644
+      loop:
+        - { section: 'api', option: 'auth_strategy', value: "keystone" }
+        - { section: 'keystone_authtoken', option: 'www_authenticate_uri', value: "http://{{ hostname }}:5000/" }
+        - { section: 'keystone_authtoken', option: 'auth_url', value: "http://{{ hostname }}:5000/" }
+        - { section: 'keystone_authtoken', option: 'memcached_servers', value: "{{ hostname }}:11211" }
+        - { section: 'keystone_authtoken', option: 'auth_type', value: "password" }
+        - { section: 'keystone_authtoken', option: 'project_domain_name', value: "Default" }
+        - { section: 'keystone_authtoken', option: 'user_domain_name', value: "Default" }
+        - { section: 'keystone_authtoken', option: 'project_name', value: "service" }
+        - { section: 'keystone_authtoken', option: 'username', value: "nova" }
+        - { section: 'keystone_authtoken', option: 'password', value: "{{ STACK_PASSWD }}" }
+        - { section: 'vnc', option: 'enabled', value: "true" }
+        - { section: 'vnc', option: 'server_listen', value: "$my_ip" }
+        - { section: 'vnc', option: 'server_proxyclient_address', value: "$my_ip" }
+        - { section: 'glance', option: 'api_servers', value: "http://{{hostname}}:9292" }
+        - { section: 'oslo_concurrency', option: 'lock_path', value: "/var/lib/nova/tmp" }
+        - { section: 'placement', option: 'region_name', value: "{{region_name}}" }
+        - { section: 'placement', option: 'project_domain_name', value: "Default" }
+        - { section: 'placement', option: 'project_name', value: "service" }
+        - { section: 'placement', option: 'auth_type', value: "password" }
+        - { section: 'placement', option: 'user_domain_name', value: "Default" }
+        - { section: 'placement', option: 'auth_url', value: "http://{{hostname}}:5000/v3" }
+        - { section: 'placement', option: 'username', value: "placement" }
+        - { section: 'placement', option: 'password', value: "{{ STACK_PASSWD }}" }
+      when: hostname == 'controller'
+
+
+    # Reg. DB
+    - name: Run {{ db_name }} nova-manage api_db sync
+      ansible.builtin.command:
+        cmd: su -s /bin/sh -c "nova-manage api_db sync" nova
+      when: hostname == 'controller'
+
+    - name: Run {{ db_name }} cell_v2 map_cell0
+      ansible.builtin.command:
+        cmd: su -s /bin/sh -c "nova-manage cell_v2 map_cell0" nova
+      when: hostname == 'controller'
+
+    - name: Run {{ db_name }} nova-manage cell_v2 create_cell
+      ansible.builtin.command:
+        cmd: su -s /bin/sh -c "nova-manage cell_v2 create_cell --name=cell1 --verbose" nova
+      when: hostname == 'controller'
+
+    - name: Run {{ db_name }} nova-manage db sync
+      ansible.builtin.command:
+        cmd: su -s /bin/sh -c "nova-manage db sync" nova
+      when: hostname == 'controller'
+
+    - name: Run {{ db_name }} nova-manage cell_v2 list_cells
+      ansible.builtin.command:
+        cmd: su -s /bin/sh -c "nova-manage cell_v2 list_cells" nova
+      when: hostname == 'controller'
+
+
+
+
+    - name: Restart nova-api service
+      ansible.builtin.service:
+        name: nova-api
+        state: restarted
+      when: hostname == 'controller'
+
+    - name: Restart nova-scheduler service
+      ansible.builtin.service:
+        name: nova-scheduler
+        state: restarted
+      when: hostname == 'controller'
+      
+    - name: Restart nova-conductor service
+      ansible.builtin.service:
+        name: nova-conductor
+        state: restarted
+      when: hostname == 'controller'
+
+    - name: Restart nova-novncproxy service
+      ansible.builtin.service:
+        name: nova-novncproxy
+        state: restarted
+      when: hostname == 'controller'

@@ -1,0 +1,37 @@
+---
+- name: "Compute : NTP 설치 ~~~~~~~~~~~~~~!!!"
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+  tasks:
+    - name: Install chrony
+      apt:
+        name: chrony
+        state: present
+        update_cache: yes
+      when: hostname != 'controller'
+
+    - name: Add server to chrony.conf
+      lineinfile:
+        path: /etc/chrony/chrony.conf
+        line: "server controller iburst"
+        create: yes
+      when: hostname != 'controller'
+
+    - name: Restart chrony service
+      service:
+        name: chrony
+        state: restarted
+      when: hostname != 'controller'
+
+    - name: Check chrony sources
+      command: chronyc sources
+      register: chronyc_sources_out
+      failed_when: false
+      when: hostname != 'controller'
+
+    - debug:
+        msg:
+          - "Chrony sources check: {{ chronyc_sources_out.stdout_lines }}"         
+      when: hostname != 'controller' and chronyc_sources_out.rc == 0

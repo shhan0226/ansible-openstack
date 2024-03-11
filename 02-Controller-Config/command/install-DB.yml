@@ -1,0 +1,48 @@
+---
+- name: "Controller : DB 설치 ~~~~~~~~~~~~~~!!!"
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+  
+  tasks:
+    - name: "<Controller:APT> Install mariadb-server"
+      apt:
+        name: mariadb-server
+        state: present
+      when: hostname == 'controller'
+
+    - name: "<Controller:APT> Install python3-pymysql"
+      apt:
+        name: python3-pymysql
+        state: present
+      when: hostname == 'controller'
+
+    - name: "shell | /etc/mysql/mariadb.conf.d/99-openstack.cnf"
+      shell: |
+        crudini --set /etc/mysql/mariadb.conf.d/99-openstack.cnf mysqld bind-address {{ inventory_hostname }}
+        crudini --set /etc/mysql/mariadb.conf.d/99-openstack.cnf mysqld default-storage-engine innodb
+        crudini --set /etc/mysql/mariadb.conf.d/99-openstack.cnf mysqld innodb_file_per_table on
+        crudini --set /etc/mysql/mariadb.conf.d/99-openstack.cnf mysqld max_connections 4096
+        crudini --set /etc/mysql/mariadb.conf.d/99-openstack.cnf mysqld collation-server utf8_general_ci
+        crudini --set /etc/mysql/mariadb.conf.d/99-openstack.cnf mysqld character-set-server utf8
+      when: hostname == 'controller'
+
+    - name: Restart MySQL service
+      service:
+        name: mysql
+        state: restarted
+      when: hostname == 'controller'
+
+    - name: mysql_secure_installation
+      command: echo -e "\ny\ny\n{{ STACK_PASSWD }}\n{{ STACK_PASSWD }}\ny\ny\ny\ny" | mysql_secure_installation
+      register: command_output
+      when: hostname == 'controller'
+
+    - name: Show command output
+      debug:
+        var: command_output.stdout
+      when: hostname == 'controller'
+
+    - name: Synchronize file systems
+      command: sync
+      

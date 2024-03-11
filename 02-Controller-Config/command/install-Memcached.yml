@@ -1,0 +1,31 @@
+---
+- name: "Controller : Memcached 설치 !!"
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+  tasks:
+    - name: "<Controller:APT> Install Memcached"
+      apt:
+        name: memcached
+        state: present
+      when: hostname == 'controller'
+
+    - name: "<Controller:APT> Install python3-memcache"
+      apt:
+        name: python3-memcache
+        state: present
+      when: hostname == 'controller'
+
+    - name: Replace string to /etc/memcached.conf
+      replace:
+        path: /etc/memcached.conf
+        regexp: '127\.0\.0\.1'
+        replace: '{{ inventory_hostname }}'
+      when: hostname == 'controller'
+
+    - name: Restart memcached service
+      service:
+        name: memcached
+        state: restarted
+      when: hostname == 'controller'

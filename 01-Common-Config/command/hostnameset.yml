@@ -1,0 +1,11 @@
+---
+- name: 호스트 이름 변경
+  hosts: remotes
+  become: yes
+  gather_facts: yes
+  any_errors_fatal: true
+
+  tasks:
+    - name: Set hostname
+      hostname:
+        name: "{{ hostname }}"

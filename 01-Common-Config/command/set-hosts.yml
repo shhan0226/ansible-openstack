@@ -1,0 +1,26 @@
+---
+- name: etc/hosts 설정 변경 ~~~~~~~~~~~~~~!!!
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+  tasks:
+    - name: Run ifconfig command
+      command: ifconfig
+      register: ifconfig_output
+      
+    - name: Display result (ifconfig)
+      debug:
+        var: ifconfig_output.stdout_lines
+
+    - name: Modify /etc/hosts file
+      lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1'
+        line: '#127.0.1.1'
+
+    - name: Add HOST entry to /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ item }} {{ hostvars[item].hostname }}"
+      loop: "{{ groups['remotes'] }}"

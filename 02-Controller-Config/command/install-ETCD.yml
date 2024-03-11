@@ -1,0 +1,157 @@
+---
+- name: "Controller : Memcached 설치 !!"
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+  vars:
+    etcd_version: "v3.4.1"
+    etcd_arch: "linux-arm64"
+  
+  tasks:
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Download etcd (aarch64)
+      get_url:
+        url: "https://github.com/etcd-io/etcd/releases/download/{{ etcd_version }}/etcd-{{ etcd_version }}-{{ etcd_arch }}.tar.gz"
+        dest: "/tmp/etcd-{{ etcd_version }}-{{ etcd_arch }}.tar.gz"
+      when: ansible_architecture == "aarch64" and ansible_hostname == "controller"
+
+    - name: Extract etcd tarball (aarch64)
+      ansible.builtin.unarchive:
+        src: "/tmp/etcd-{{ etcd_version }}-{{ etcd_arch }}.tar.gz"
+        dest: "/tmp"
+        remote_src: yes
+      when: ansible_architecture == "aarch64" and ansible_hostname == "controller"
+
+    - name: Find etcd binaries on the remote host (aarch64)
+      find:
+        paths: "/tmp/etcd-{{ etcd_version }}-{{ etcd_arch }}"
+        patterns: "etcd*"
+      register: etcd_binaries
+      when: ansible_architecture == "aarch64" and ansible_hostname == "controller"
+
+    - name: Copy etcd binaries to /usr/bin (aarch64)
+      copy:
+        src: "{{ item.path }}"
+        dest: "/usr/bin/{{ item.path | basename }}"
+        mode: '0755'
+        remote_src: yes
+      loop: "{{ etcd_binaries.files }}"
+      when: ansible_architecture == "aarch64" and ansible_hostname == "controller"
+
+    - name: Create etcd group (aarch64)
+      group:
+        name: etcd
+        system: yes
+      when: ansible_architecture == "aarch64" and ansible_hostname == "controller"
+
+    - name: Create etcd user (aarch64)
+      user:
+        name: etcd
+        group: etcd
+        system: yes
+        home: "/var/lib/etcd"
+        shell: "/bin/false"
+      when: ansible_architecture == "aarch64" and ansible_hostname == "controller"
+    
+    - name: Create directories for etcd (aarch64)
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: etcd
+        group: etcd
+      loop:
+        - "/etc/etcd"
+        - "/var/lib/etcd"
+      when: ansible_architecture == "aarch64" and ansible_hostname == "controller"
+
+    - name: Configure etcd (aarch64)
+      copy:
+        dest: "/etc/etcd/etcd.conf.yml"
+        content: |
+          name: {{ hostname }}
+          data-dir: /var/lib/etcd
+          initial-cluster-state: 'new'
+          initial-cluster-token: 'etcd-cluster-01'
+          initial-cluster: {{ hostname }}=http://{{ inventory_hostname }}:2380
+          initial-advertise-peer-urls: http://{{ inventory_hostname }}:2380
+          advertise-client-urls: http://{{ inventory_hostname }}:2379
+          listen-peer-urls: http://0.0.0.0:2380
+          listen-client-urls: http://{{ inventory_hostname }}:2379
+      when: ansible_architecture == "aarch64" and ansible_hostname == "controller"
+
+    - name: Create etcd systemd service file (aarch64)
+      copy:
+        dest: "/lib/systemd/system/etcd.service"
+        content: |
+          [Unit]
+          Description=etcd - highly-available key value store
+          Documentation=https://github.com/coreos/etcd
+          Documentation=man:etcd
+          After=network.target
+          Wants=network-online.target
+
+          [Service]
+          Environment=DAEMON_ARGS=
+          Environment=ETCD_NAME=%H
+          Environment=ETCD_DATA_DIR=/var/lib/etcd/default
+          Environment="ETCD_UNSUPPORTED_ARCH=arm64"
+          EnvironmentFile=-/etc/default/%p
+          Type=notify
+          User=etcd
+          PermissionsStartOnly=true
+          ExecStart=/usr/bin/etcd --config-file /etc/etcd/etcd.conf.yml
+          Restart=on-abnormal
+          LimitNOFILE=65536
+
+          [Install]
+          WantedBy=multi-user.target
+          Alias=etcd2.service
+      when: ansible_architecture == "aarch64" and ansible_hostname == "controller"
+
+    - name: Install etcd (x86_64)
+      ansible.builtin.apt:
+        name: etcd
+        state: present
+        update_cache: yes
+        force_apt_get: yes
+      when: ansible_architecture == "x86_64" and ansible_hostname == "controller"
+
+    - name: Configure etcd in /etc/default/etcd (x86_64)
+      blockinfile:
+        path: /etc/default/etcd
+        block: |
+          ETCD_NAME="{{ hostname }}"
+          ETCD_DATA_DIR="/var/lib/etcd"
+          ETCD_INITIAL_CLUSTER_STATE="new"
+          ETCD_INITIAL_CLUSTER_TOKEN="etcd-cluster-01"
+          ETCD_INITIAL_CLUSTER="{{ hostname }}=http://{{ inventory_hostname }}:2380"
+          ETCD_INITIAL_ADVERTISE_PEER_URLS="http://{{ inventory_hostname }}:2380"
+          ETCD_ADVERTISE_CLIENT_URLS="http://{{ inventory_hostname }}:2379"
+          ETCD_LISTEN_PEER_URLS="http://0.0.0.0:2380"
+          ETCD_LISTEN_CLIENT_URLS="http://{{ inventory_hostname }}:2379"
+        create: yes
+        marker: "# {mark} ANSIBLE MANAGED BLOCK"
+      when: ansible_architecture == "x86_64" and ansible_hostname == "controller"
+
+    - name: Sync filesystem changes 
+      ansible.builtin.command:
+        cmd: sync
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: yes
+      
+    - name: Enable etcd service
+      ansible.builtin.systemd:
+        name: etcd
+        enabled: yes
+      when: hostname == 'controller'        
+
+    - name: Restart etcd service
+      ansible.builtin.systemd:
+        name: etcd
+        state: restarted
+      when: hostname == 'controller'

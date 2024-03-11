@@ -1,0 +1,105 @@
+---
+- name: 패키지 설치 !!!
+  hosts: remotes
+  become: yes
+  any_errors_fatal: true
+
+  tasks:
+    - name: "<APT> Install python3-pip"
+      apt:
+        name: python3-pip
+        state: present
+
+    - name: "<APT> Install python-is-python3"
+      apt:
+        name: python-is-python3
+        state: present
+
+    - name: <APT> simplejson 패키지 설치
+      pip:
+        name: simplejson
+        state: present
+    
+    - name: <APT> simplejson 패키지 설치
+      pip:
+        name: simplejson
+        state: present
+        extra_args: "--ignore-installed"
+
+    - name: "<APT> Install git"
+      apt:
+        name: git
+        state: present
+
+    - name: "<APT> Install vim"
+      apt:
+        name: vim
+        state: present
+
+    - name: "<APT> Install curl"
+      apt:
+        name: curl
+        state: present
+    
+    - name: "<APT> Install wget"
+      apt:
+        name: wget
+        state: present
+
+    - name: "<APT> Install build-essential"
+      apt:
+        name: build-essential
+        state: present
+
+    - name: "<APT> Install net-tools"
+      apt:
+        name: net-tools
+        state: present
+
+    - name: "<APT> crudini"
+      apt:
+        name: crudini
+        state: present
+
+    - name: "<APT> software-properties-common"
+      apt:
+        name: software-properties-common
+        state: present
+
+    - name: "<APT> Add OpenStack repository: {{ OPENSTACK_VER }}"
+      shell: add-apt-repository cloud-archive:{{ OPENSTACK_VER }} -y
+      register: command_output
+
+    - name: Show command output
+      debug:
+        msg: "{{ command_output.stdout_lines }}"
+
+    - name: "<APT> Install python3-openstackclient"
+      apt:
+        name: python3-openstackclient
+        state: present
+
+    - name: Uninstall specific packages
+      pip:
+        name: "{{ item }}"
+        state: absent
+      loop:
+        - matrix-synapse
+        - twisted
+        - cryptography
+        - bcrypt
+        - cftp
+  
+    - name: Install specific version of sqlalchemy for ARM64
+      pip:
+        name: sqlalchemy==1.4.13
+        state: present
+      when: ansible_architecture == "aarch64"
+
+    - name: Install specific version of cryptography
+      pip:
+        name: cryptography==3.2
+        state: present
+
+    - name: Synchronize file systems
+      command: sync

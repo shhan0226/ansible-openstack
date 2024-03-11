@@ -1,0 +1,14 @@
+[all:vars]
+ansible_user=USER_SET
+ansible_password=PASSWD_SET
+ansible_become_password=PASSWD_SET
+USER=USER_SET
+
+[remotes]
+
+[remotes:vars]
+USER=USER_SET
+OPENSTACK_VER=OPENSTACK_VERv
+INTERFACE_NAME=INTERFACE_NAME_v
+SET_IP_ALLOW=SET_IP_ALLOWv
+STACK_PASSWD=STACK_PASSWDv

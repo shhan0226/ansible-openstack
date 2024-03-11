@@ -1,0 +1,41 @@
+- name: Check versions and running services
+  hosts: remotes
+  become: yes
+  tasks:
+    - name: Check OpenStack version
+      command: openstack --version
+      register: openstack_version
+      ignore_errors: yes
+
+    - name: Show OpenStack version
+      debug:
+        msg: "{{ openstack_version.stdout_lines }}"
+
+    - name: Check Python version
+      command: python --version
+      register: python_version
+      ignore_errors: yes
+
+    - name: Show Python version
+      debug:
+        msg: "{{ python_version.stdout_lines }}"
+
+    - name: Check PIP version
+      command: pip --version
+      register: pip_version
+      ignore_errors: yes
+
+    - name: Show PIP version
+      debug:
+        msg: "{{ pip_version.stdout_lines }}"
+
+    - name: Get list of running services
+      shell: service --status-all | grep '+'
+      register: running_services
+      ignore_errors: yes
+      args:
+        warn: false
+
+    - name: Show running services
+      debug:
+        msg: "{{ running_services.stdout_lines }}"

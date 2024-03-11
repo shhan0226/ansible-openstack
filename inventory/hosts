@@ -1,0 +1,16 @@
+[all:vars]
+ansible_user=vraptor
+ansible_password=vraptor
+ansible_become_password=vraptor
+USER=vraptor
+
+[remotes]
+192.168.3.142 hostname=compute1
+192.168.3.141 hostname=controller
+
+[remotes:vars]
+USER=vraptor
+OPENSTACK_VER=yoga
+INTERFACE_NAME=eth0
+SET_IP_ALLOW=192.168.0.0/22
+STACK_PASSWD=stack
